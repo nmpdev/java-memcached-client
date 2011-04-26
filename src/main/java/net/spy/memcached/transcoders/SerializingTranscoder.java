@@ -2,19 +2,36 @@
 
 package net.spy.memcached.transcoders;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.Date;
 
 import net.spy.memcached.CachedData;
+import org.hibernate.cache.entry.CacheEntry;
+import org.msgpack.MessageTypeException;
+import org.msgpack.Packer;
+import org.msgpack.Unpacker;
+import org.xerial.snappy.Snappy;
+import org.xerial.snappy.SnappyException;
 
 /**
  * Transcoder that serializes and compresses objects.
  */
 public class SerializingTranscoder extends BaseSerializingTranscoder
 	implements Transcoder<Object> {
+    static boolean WITH_CACHE_ENTRY = true;
+    static {
+        if( null != System.getProperty("WITHOUT_CACHE_ENTRY") ) {
+            WITH_CACHE_ENTRY = false;
+        }
+    }
 
 	// General flags
 	static final int SERIALIZED=1;
 	static final int COMPRESSED=2;
+    static final int CACHE_ENTRY=4;
+
 
 	// Special flags for specially handled types.
 	private static final int SPECIAL_MASK=0xff00;
@@ -46,7 +63,8 @@ public class SerializingTranscoder extends BaseSerializingTranscoder
 	@Override
 	public boolean asyncDecode(CachedData d) {
 		if((d.getFlags() & COMPRESSED) != 0
-				|| (d.getFlags() & SERIALIZED) != 0 ) {
+				|| (d.getFlags() & SERIALIZED) != 0
+                || (d.getFlags() & CACHE_ENTRY) != 0) {
 			return true;
 		}
 		return super.asyncDecode(d);
@@ -64,6 +82,8 @@ public class SerializingTranscoder extends BaseSerializingTranscoder
 		int flags=d.getFlags() & SPECIAL_MASK;
 		if((d.getFlags() & SERIALIZED) != 0 && data != null) {
 			rv=deserialize(data);
+		} else if((d.getFlags() & CACHE_ENTRY) != 0 && data != null) {
+            rv=decodeCacheEntry(data);
 		} else if(flags != 0 && data != null) {
 			switch(flags) {
 				case SPECIAL_BOOLEAN:
@@ -99,9 +119,10 @@ public class SerializingTranscoder extends BaseSerializingTranscoder
 		return rv;
 	}
 
-	/* (non-Javadoc)
-	 * @see net.spy.memcached.Transcoder#encode(java.lang.Object)
-	 */
+
+    /* (non-Javadoc)
+      * @see net.spy.memcached.Transcoder#encode(java.lang.Object)
+      */
 	public CachedData encode(Object o) {
 		byte[] b=null;
 		int flags=0;
@@ -131,6 +152,9 @@ public class SerializingTranscoder extends BaseSerializingTranscoder
 		} else if(o instanceof byte[]) {
 			b=(byte[])o;
 			flags |= SPECIAL_BYTEARRAY;
+		} else if(o instanceof CacheEntry && WITH_CACHE_ENTRY) {
+			b=encodeCacheEntry((CacheEntry)o);
+			flags |= CACHE_ENTRY;
 		} else {
 			b=serialize(o);
 			flags |= SERIALIZED;
@@ -152,4 +176,52 @@ public class SerializingTranscoder extends BaseSerializingTranscoder
 		return new CachedData(flags, b, getMaxSize());
 	}
 
+	public byte[] encodeCacheEntry(CacheEntry cacheEntry) {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		try {
+			cacheEntry.messagePack(new Packer(out));
+		} catch (IOException e) {
+			getLogger().error("encode error",e);
+		}
+
+		return out.toByteArray();
+	}
+
+	public CacheEntry decodeCacheEntry(byte[] data) {
+		CacheEntry dst = new CacheEntry();
+
+		ByteArrayInputStream in = new ByteArrayInputStream(data);
+		try {
+			dst.messageUnpack(new Unpacker(in));
+		} catch (MessageTypeException e) {
+			getLogger().error("decode error",e);
+		} catch (IOException e) {
+			getLogger().error("decode error",e);
+		}
+
+		return dst;
+	}
+
+    @Override
+    protected byte[] compress(byte[] in) {
+        byte[] compressed = null;
+        try {
+            compressed = Snappy.compress(in);
+        } catch (SnappyException e) {
+            getLogger().error("", e);
+        }
+        return compressed;
+    }
+
+    @Override
+    protected byte[] decompress(byte[] in) {
+        byte[] decompressed = null;
+        try {
+            decompressed = Snappy.uncompress(in);
+        } catch (SnappyException e) {
+            getLogger().error("", e);
+        }
+        return decompressed;
+
+    }
 }

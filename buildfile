@@ -58,7 +58,8 @@ define "memcached" do
   project.group = GROUP
   compile.options.target = '1.5'
   manifest["Implementation-Vendor"] = COPYRIGHT
-  compile.with "log4j:log4j:jar:1.2.15", "jmock:jmock:jar:1.2.0",
+  compile.with "log4j:log4j:jar:1.2.15", "jmock:jmock:jar:1.2.0", "org.hibernate:hibernate-core:jar:3.6.3.NMP.20110318",
+               "org.msgpack:msgpack:jar:0.5.1-devel", "org.xerial.snappy:snappy-java:jar:1.0.1-rc4",
                "junit:junit:jar:4.4", "org.springframework:spring-beans:jar:3.0.3.RELEASE"
 
   # Gen build
